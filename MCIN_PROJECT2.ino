@@ -9,6 +9,7 @@
 // WAITS
 int WAIT_TIME = 1500; // 1.5 SECONDS
 int ROTATING_WAIT_TIME = 500; // 0.5 SECONDS
+int FASTER_ROTATING_WAIT_TIME = 100; // 0.1 SECONDS
 int GAME_ROTATING_WAIT_TIME = 100; // 0.1 SECONDs
 int COUNT_DOWN_WAIT_TIME = 1000; // 1 SECOND
 
@@ -17,6 +18,7 @@ bool simplePattern = true;
 bool bombGame = false;
 bool COUNT_DOWN_ACTIVE = false;
 unsigned long COUNT_DOWN_START = 0;
+bool playingAlternatePattern = false;
 
 // SHIFT
 int SHIFT_SPACE_RIGHT = 2;
@@ -40,14 +42,50 @@ void setup()
     PB2 = 0x02 = PINB
   */
   #define BZR 0x04 // BUZZER
-  // IF I CAN USE PINMODE AND DIGITALWRITE, I CAN MAKE SOUND MORE APPEALING
+  
+  // PWM SETUP
+  InitPWM();
 }
 
 //*-----------------------------------------------------------------------------*//
 // FUNCTIONS //
 
+// SETUP D11 FOR GREEN_LED BRIGHTNESS CONTROL
+void InitPWM()
+{
+  TCCR2A = 0x83;    // Fast PWM on OC2A (D11)
+  TCCR2B = 0x04;    // Prescaler = 64
+  DDRB |= 0x08;     // Set D11 as output
+}
+
+// CHANGE BRIGHTNESS WHILE HOLDING PB1 (FADES UP AND DOWN)
+void FadeWhileButtonHeld()
+{
+  if (!(PINB & 0x01)) return; // IF NOT PB1 THEN DO NOTHING
+
+  static int brightness = 0;
+  static int direction = 1; // 1 = up, -1 = down
+
+  OCR2A = brightness;
+  brightness += direction;
+
+  if (brightness >= 255)
+  {
+    brightness = 255;
+    direction = -1; // Start fading down
+  }
+
+  else if (brightness <= 0)
+  {
+    brightness = 0;
+    direction = 1; // Start fading up
+  }
+
+  delay(5); // Controls fade speed
+}
+
 // ALTERNATE PATTERN
-void AlternateBlinkPattern()
+void AlternatePattern()
 {
   if (!simplePattern) return;
 
@@ -71,11 +109,46 @@ void AlternateBlinkPattern()
     0b10000100
   };
 
-    for (int i = 0; i < sizeof(ledPatterns); i++)       // USE FOR LOOP TO EXECUTE THE PATTERN
-    {
-      PORTD = ledPatterns[i];
-      delay(ROTATING_WAIT_TIME);                        // PAUSE FOR AWHILE IF NOT WILL WILL BREAK THE PATTERN
-    }
+  for (int i = 0; i < sizeof(ledPatterns); i++)   // USE FOR LOOP TO EXECUTE THE PATTERN
+  {
+    PORTD = ledPatterns[i];
+    delay(FASTER_ROTATING_WAIT_TIME);  // PAUSE FOR AWHILE IF NOT WILL WILL BREAK THE PATTERN
+  }
+}
+
+// NEXT ALTERNATE PATTERN
+void NextAlternatePattern()
+{
+  if (!simplePattern) return;
+
+  const byte ledPatterns[] = {                       // ENABLES ME TO DRAW A PATTERN (DNA PATTERN)
+    0b10000000,
+    0b01000000,
+    0b00010000,
+    0b00001000,
+    0b00000100,
+    0b00001000,
+    0b00010000,
+    0b00100000,
+    0b01000000,
+    0b10000000,
+    0b01000000,
+    0b00100000,
+    0b00010000,
+    0b00001000,
+    0b00000100,
+    0b00001000,
+    0b00010000,
+    0b00100000,
+    0b01000000,
+    0b10000000
+  };
+
+  for (int i = 0; i < sizeof(ledPatterns); i++)   // USE FOR LOOP TO EXECUTE THE PATTERN
+  {
+    PORTD = ledPatterns[i];
+    delay(FASTER_ROTATING_WAIT_TIME);  // PAUSE FOR AWHILE IF NOT WILL WILL BREAK THE PATTERN
+  }
 }
 
 unsigned char pat = 0x01;
@@ -102,6 +175,8 @@ void EnableBombGame()
     // TURNS EVERYTHING ON TO SHOW GAME START
     simplePattern = false;
     PORTD = 0xFC;
+
+    // PLANTING THE BOMB
     for (int i = 0; i < 3; i++)
     {
       // 3 PLANTING BOMB BEEPS
@@ -162,23 +237,24 @@ void BombGame()
       // LOSE CONDITION
       if (COUNT_DOWN <= 0)
       {
-        for (int i = 0; i < 5; i++)
-        {
-          // 3 PLANTING BOMB BEEPS
-          PORTB |= BZR;        // ON
-          delay(50);           // BEEP DURATION
-          PORTB &= ~BZR;       // OFF
-          delay(50);           // WAIT TIME BEFORE NEXT BEEP
-        }
-
         COUNT_DOWN_ACTIVE = false;
-        PORTD = 0xFC;  // All LEDS ON
+        PORTD = 0xFC;  // ALL LEDS ON
 
-        PORTB |= BZR;   // Beep ON
+        // EXPLODING BEEP
+        PORTB |= BZR;   // ON
         delay(1000);
-        PORTB &= ~BZR;  // Beep OFF
+        PORTB &= ~BZR;  // OFF
 
-        PORTD &= 0x00;  // All LEDS OFF
+        /*for (int i = 0; i < 5000; i += 1000)
+        {
+          tone(BZR , i );
+          PORTB |= BZR;   // ON
+          delay(10);
+          PORTB &= ~BZR;
+        }
+        noTone(BZR);*/
+
+        PORTD &= 0x00;  // ALL LEDS OFF
 
         pressedAmount = 0;
         return;
@@ -207,10 +283,11 @@ void BombGame()
 
 void DefuseSINGLEPress()
 {
-  static bool LASTBUTTON_STATE = false;                                       // THIS STORES THE PREVIOUS STATE
+  static bool LASTBUTTON_STATE = false;                                        // THIS SETS AND STORES THE PREVIOUS STATE
   bool CURRENTBUTTON_STATE = PINB & 0x01;
   if (bombGame && CURRENTBUTTON_STATE && !LASTBUTTON_STATE && pat == 0x80)     // CONDITIONS TO ADD PRESSED_AMOUNT
   {
+    Serial.print("Defused");
     pressedAmount++;
   }
   LASTBUTTON_STATE = CURRENTBUTTON_STATE;                                      // THIS UPDATES THE BUTTON STATE FOR THE NEXT LOOP
@@ -220,20 +297,21 @@ void DefuseSINGLEPress()
 
 void loop()
 {
-  // Only when LEFT_PB is pressed THEN simplePattern is false //
   EnableBombGame();
   BombGame();
   DefuseSINGLEPress();
 
-  // Only when RIGHT_PB is pressed AND simplePattern is true //
   // PRESS RIGHT_PB
   if (PINB & 0x01)
   {
-  	AlternateBlinkPattern();
+    FadeWhileButtonHeld();
+    AlternatePattern();
   }
+
+  // PLAY DEFAULT LED PATTERN
   else
   {
-    RotateLeft();
+    NextAlternatePattern();
   }
 }
 
